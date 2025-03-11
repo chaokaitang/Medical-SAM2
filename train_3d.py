@@ -1,17 +1,8 @@
-# train.py
-#!/usr/bin/env	python3
-
-""" train network using pytorch
-    Yunli Qi
-"""
-
 import os
 import time
-
 import torch
 import torch.optim as optim
 from tensorboardX import SummaryWriter
-
 import cfg
 from func_3d import function
 from conf import settings
@@ -19,91 +10,93 @@ from func_3d.utils import get_network, set_log_dir, create_logger
 from func_3d.dataset import get_dataloader
 
 def main():
-
     args = cfg.parse_args()
 
-    GPUdevice = torch.device('cuda', args.gpu_device)
+    # 自动检测可用的 GPU 设备
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
-    net = get_network(args, args.net, use_gpu=args.gpu, gpu_device=GPUdevice, distribution = args.distributed)
-    net.to(dtype=torch.bfloat16)
+    # 1. **初始化网络**
+    net = get_network(args, args.net, use_gpu=args.gpu, gpu_device=device, distribution=args.distributed)
+
+    # **使用多个 GPU**
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs for training!")
+        net = torch.nn.DataParallel(net)  # 让 PyTorch 自动并行计算
+
+    net.to(device)  # **将模型放到 GPU**
+    net.to(dtype=torch.bfloat16)  # **转换精度**
+
+    # **加载预训练模型**
     if args.pretrain:
-        print(args.pretrain)
-        weights = torch.load(args.pretrain)
-        net.load_state_dict(weights,strict=False)
+        print(f"Loading pretrained model from {args.pretrain}")
+        weights = torch.load(args.pretrain, map_location=device)
+        net.load_state_dict(weights, strict=False)
 
-    sam_layers = (
-                  []
-                #   + list(net.image_encoder.parameters())
-                #   + list(net.sam_prompt_encoder.parameters())
-                  + list(net.sam_mask_decoder.parameters())
-                  )
+    # **指定不同的优化层**
+    sam_layers = list(net.module.sam_mask_decoder.parameters()) if hasattr(net, 'module') else list(net.sam_mask_decoder.parameters())
     mem_layers = (
-                  []
-                  + list(net.obj_ptr_proj.parameters())
-                  + list(net.memory_encoder.parameters())
-                  + list(net.memory_attention.parameters())
-                  + list(net.mask_downsample.parameters())
-                  )
-    if len(sam_layers) == 0:
-        optimizer1 = None
-    else:
-        optimizer1 = optim.Adam(sam_layers, lr=1e-4, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
-    if len(mem_layers) == 0:
-        optimizer2 = None
-    else:
-        optimizer2 = optim.Adam(mem_layers, lr=1e-8, betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
-    # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5) #learning rate decay
+        list(net.module.obj_ptr_proj.parameters()) +
+        list(net.module.memory_encoder.parameters()) +
+        list(net.module.memory_attention.parameters()) +
+        list(net.module.mask_downsample.parameters())
+        if hasattr(net, 'module') else
+        list(net.obj_ptr_proj.parameters()) +
+        list(net.memory_encoder.parameters()) +
+        list(net.memory_attention.parameters()) +
+        list(net.mask_downsample.parameters())
+    )
 
-    torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()
+    # **优化器**
+    optimizer1 = optim.Adam(sam_layers, lr=1e-4, betas=(0.9, 0.999), eps=1e-08) if sam_layers else None
+    optimizer2 = optim.Adam(mem_layers, lr=1e-8, betas=(0.9, 0.999), eps=1e-08) if mem_layers else None
 
+    # **学习率调度**
+    # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+
+    # **开启 TensorFloat-32 加速**
     if torch.cuda.get_device_properties(0).major >= 8:
-        # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
+    # **日志、数据加载**
     args.path_helper = set_log_dir('logs', args.exp_name)
     logger = create_logger(args.path_helper['log_path'])
     logger.info(args)
 
     nice_train_loader, nice_test_loader = get_dataloader(args)
 
-    '''checkpoint path and tensorboard'''
+    '''检查点路径 & TensorBoard'''
     checkpoint_path = os.path.join(settings.CHECKPOINT_PATH, args.net, settings.TIME_NOW)
-    #use tensorboard
-    if not os.path.exists(settings.LOG_DIR):
-        os.mkdir(settings.LOG_DIR)
-    writer = SummaryWriter(log_dir=os.path.join(
-            settings.LOG_DIR, args.net, settings.TIME_NOW))
+    os.makedirs(checkpoint_path, exist_ok=True)
 
-    #create checkpoint folder to save model
-    if not os.path.exists(checkpoint_path):
-        os.makedirs(checkpoint_path)
-    checkpoint_path = os.path.join(checkpoint_path, '{net}-{epoch}-{type}.pth')
+    writer = SummaryWriter(log_dir=os.path.join(settings.LOG_DIR, args.net, settings.TIME_NOW))
 
-    '''begain training'''
+    '''开始训练'''
     best_acc = 0.0
     best_tol = 1e4
     best_dice = 0.0
 
     for epoch in range(settings.EPOCH):
+        torch.cuda.empty_cache()  # **释放显存**
 
-        # if epoch < 5:
-        #     tol, (eiou, edice) = function.validation_sam(args, nice_test_loader, epoch, net, writer)
-        #     logger.info(f'Total score: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
         net.train()
         time_start = time.time()
         loss, prompt_loss, non_prompt_loss = function.train_sam(args, net, optimizer1, optimizer2, nice_train_loader, epoch)
         logger.info(f'Train loss: {loss}, {prompt_loss}, {non_prompt_loss} || @ epoch {epoch}.')
         time_end = time.time()
-        print('time_for_training ', time_end - time_start)
+        print(f'Time for training epoch {epoch}: {time_end - time_start:.2f} seconds')
 
+        # **评估模型**
         net.eval()
-        if epoch % args.val_freq == 0 or epoch == settings.EPOCH-1:
-            tol, (eiou, edice) = function.validation_sam(args, nice_test_loader, epoch, net, writer)
-            
-            logger.info(f'Total score: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
+        if epoch % args.val_freq == 0 or epoch == settings.EPOCH - 1:
+            with torch.no_grad():
+                tol, (eiou, edice) = function.validation_sam(args, nice_test_loader, epoch, net, writer)
 
+            logger.info(f'Total score: {tol}, IOU: {eiou}, DICE: {edice} || @ epoch {epoch}.')
             torch.save({'model': net.state_dict()}, os.path.join(args.path_helper['ckpt_path'], 'latest_epoch.pth'))
+
+        torch.cuda.empty_cache()  # **释放显存**
 
     writer.close()
 
