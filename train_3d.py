@@ -31,37 +31,21 @@ def main():
         weights = torch.load(args.pretrain)
         net.load_state_dict(weights,strict=False)
 
-    if args.distributed != 'none':
+    net = net.module if isinstance(net, torch.nn.DataParallel) else net
 
-        sam_layers = (
-                    []
-                    #   + list(net.image_encoder.parameters())
-                    #   + list(net.sam_prompt_encoder.parameters())
-                    + list(net.module.sam_mask_decoder.parameters())
-                    )
-        mem_layers = (
-            []
-            + list(net.module.obj_ptr_proj.parameters())
-            + list(net.module.memory_encoder.parameters())
-            + list(net.module.memory_attention.parameters())
-            + list(net.module.mask_downsample.parameters())
-        )
-
-    else:
-
-        sam_layers = (
-                    []
-                    #   + list(net.image_encoder.parameters())
-                    #   + list(net.sam_prompt_encoder.parameters())
-                    + list(net.sam_mask_decoder.parameters())
-                    )
-        mem_layers = (
-                    []
-                    + list(net.obj_ptr_proj.parameters())
-                    + list(net.memory_encoder.parameters())
-                    + list(net.memory_attention.parameters())
-                    + list(net.mask_downsample.parameters())
-                    )
+    sam_layers = (
+                []
+                #   + list(net.image_encoder.parameters())
+                #   + list(net.sam_prompt_encoder.parameters())
+                + list(net.sam_mask_decoder.parameters())
+                )
+    mem_layers = (
+                []
+                + list(net.obj_ptr_proj.parameters())
+                + list(net.memory_encoder.parameters())
+                + list(net.memory_attention.parameters())
+                + list(net.mask_downsample.parameters())
+                )
         
     if len(sam_layers) == 0:
         optimizer1 = None
