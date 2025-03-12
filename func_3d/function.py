@@ -80,7 +80,7 @@ def train_sam(args, net: nn.Module, optimizer1, optimizer2, train_loader,
             elif prompt == 'bbox':
                 bbox_dict = pack['bbox']
             imgs_tensor = imgs_tensor.squeeze(0)
-            imgs_tensor = imgs_tensor.to(dtype = torch.float32, device = GPUdevice)
+            imgs_tensor = imgs_tensor.to(dtype = torch.float16, device = GPUdevice)
             
             if args.distributed != 'none':
                 train_state = net.module.train_init_state(imgs_tensor=imgs_tensor)
