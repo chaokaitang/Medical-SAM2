@@ -283,7 +283,7 @@ def validation_sam(args, val_loader, epoch, net: nn.Module, clean_dir=True):
                             if prompt == 'click':
                                 points = pt_dict[id][ann_obj_id].to(device=GPUdevice)
                                 labels = point_labels_dict[id][ann_obj_id].to(device=GPUdevice)
-                                _, _, _ = net.train_add_new_points(
+                                _, _, _ = net.module.train_add_new_points(
                                     inference_state=train_state,
                                     frame_idx=id,
                                     obj_id=ann_obj_id,
@@ -293,7 +293,7 @@ def validation_sam(args, val_loader, epoch, net: nn.Module, clean_dir=True):
                                 )
                             elif prompt == 'bbox':
                                 bbox = bbox_dict[id][ann_obj_id]
-                                _, _, _ = net.train_add_new_bbox(
+                                _, _, _ = net.module.train_add_new_bbox(
                                     inference_state=train_state,
                                     frame_idx=id,
                                     obj_id=ann_obj_id,
@@ -301,7 +301,7 @@ def validation_sam(args, val_loader, epoch, net: nn.Module, clean_dir=True):
                                     clear_old_points=False,
                                 )
                         except KeyError:
-                            _, _, _ = net.train_add_new_mask(
+                            _, _, _ = net.module.train_add_new_mask(
                                 inference_state=train_state,
                                 frame_idx=id,
                                 obj_id=ann_obj_id,
@@ -309,7 +309,7 @@ def validation_sam(args, val_loader, epoch, net: nn.Module, clean_dir=True):
                             )
                 video_segments = {}  # video_segments contains the per-frame segmentation results
             
-                for out_frame_idx, out_obj_ids, out_mask_logits in net.propagate_in_video(train_state, start_frame_idx=0):
+                for out_frame_idx, out_obj_ids, out_mask_logits in net.module.propagate_in_video(train_state, start_frame_idx=0):
                     video_segments[out_frame_idx] = {
                         out_obj_id: out_mask_logits[i]
                         for i, out_obj_id in enumerate(out_obj_ids)
@@ -350,7 +350,7 @@ def validation_sam(args, val_loader, epoch, net: nn.Module, clean_dir=True):
 
                 mix_res = tuple([sum(a) for a in zip(mix_res, temp)])
 
-            net.reset_state(train_state)
+            net.module.reset_state(train_state)
             pbar.update()
 
     return tot/ n_val , tuple([a/n_val for a in mix_res])
