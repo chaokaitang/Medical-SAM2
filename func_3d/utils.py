@@ -19,7 +19,7 @@ import cfg
 args = cfg.parse_args()
 device = torch.device('cuda', args.gpu_device)
 
-def get_network(args, net, use_gpu=True, gpu_devices=[0], distribution=True):
+def get_network(args, net, use_gpu=True, gpu_device = 0, distribution = True):
     """ return given network
     """
 
@@ -35,9 +35,7 @@ def get_network(args, net, use_gpu=True, gpu_devices=[0], distribution=True):
         sys.exit()
 
     if use_gpu:
-        if distribution and len(gpu_devices) > 1:
-            net = torch.nn.DataParallel(net, device_ids=gpu_devices)
-        net = net.to(device=f'cuda:{gpu_devices[0]}')
+        net = net.to(device=gpu_device)
 
     return net
 
