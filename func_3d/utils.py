@@ -38,7 +38,7 @@ def get_network(args, net, use_gpu=True, gpu_device = 0, distribution = True):
         #net = net.cuda(device = gpu_device)
         if distribution != 'none':
             net = torch.nn.DataParallel(net,device_ids=[int(id) for id in args.distributed.split(',')])
-            net = net.to(device=gpu_device)
+            print(f"Using {torch.cuda.device_count()} GPUs!")
         else:
             net = net.to(device=gpu_device)
 

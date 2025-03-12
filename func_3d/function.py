@@ -104,37 +104,71 @@ def train_sam(args, net: nn.Module, optimizer1, optimizer2, train_loader,
                             if prompt == 'click':
                                 points = pt_dict[id][ann_obj_id].to(device=GPUdevice)
                                 labels = point_labels_dict[id][ann_obj_id].to(device=GPUdevice)
-                                _, _, _ = net.train_add_new_points(
-                                    inference_state=train_state,
-                                    frame_idx=id,
-                                    obj_id=ann_obj_id,
-                                    points=points,
-                                    labels=labels,
-                                    clear_old_points=False,
-                                )
+                                if args.distributed != 'none':
+                                    _, _, _ = net.module.train_add_new_points(
+                                        inference_state=train_state,
+                                        frame_idx=id,
+                                        obj_id=ann_obj_id,
+                                        points=points,
+                                        labels=labels,
+                                        clear_old_points=False,
+                                    )
+                                else:
+                                    _, _, _ = net.train_add_new_points(
+                                        inference_state=train_state,
+                                        frame_idx=id,
+                                        obj_id=ann_obj_id,
+                                        points=points,
+                                        labels=labels,
+                                        clear_old_points=False,
+                                    )
                             elif prompt == 'bbox':
                                 bbox = bbox_dict[id][ann_obj_id]
-                                _, _, _ = net.train_add_new_bbox(
+                                if args.distributed != 'none':
+                                    _, _, _ = net.module.train_add_new_bbox(
+                                        inference_state=train_state,
+                                        frame_idx=id,
+                                        obj_id=ann_obj_id,
+                                        bbox=bbox.to(device=GPUdevice),
+                                        clear_old_points=False,
+                                    )
+                                else:
+                                    _, _, _ = net.train_add_new_bbox(
+                                        inference_state=train_state,
+                                        frame_idx=id,
+                                        obj_id=ann_obj_id,
+                                        bbox=bbox.to(device=GPUdevice),
+                                        clear_old_points=False,
+                                    )
+                        except KeyError:
+                            if args.distributed != 'none':
+                                _, _, _ = net.module.train_add_new_mask(
                                     inference_state=train_state,
                                     frame_idx=id,
                                     obj_id=ann_obj_id,
-                                    bbox=bbox.to(device=GPUdevice),
-                                    clear_old_points=False,
+                                    mask=torch.zeros(imgs_tensor.shape[2:]).to(device=GPUdevice),
                                 )
-                        except KeyError:
-                            _, _, _ = net.train_add_new_mask(
-                                inference_state=train_state,
-                                frame_idx=id,
-                                obj_id=ann_obj_id,
-                                mask = torch.zeros(imgs_tensor.shape[2:]).to(device=GPUdevice),
-                            )
+                            else:
+                                _, _, _ = net.train_add_new_mask(
+                                    inference_state=train_state,
+                                    frame_idx=id,
+                                    obj_id=ann_obj_id,
+                                    mask=torch.zeros(imgs_tensor.shape[2:]).to(device=GPUdevice),
+                                )
                 video_segments = {}  # video_segments contains the per-frame segmentation results
             
-                for out_frame_idx, out_obj_ids, out_mask_logits in net.train_propagate_in_video(train_state, start_frame_idx=0):
-                    video_segments[out_frame_idx] = {
-                        out_obj_id: out_mask_logits[i]
-                        for i, out_obj_id in enumerate(out_obj_ids)
-                    }
+                if args.distributed != 'none':
+                    for out_frame_idx, out_obj_ids, out_mask_logits in net.module.train_propagate_in_video(train_state, start_frame_idx=0):
+                        video_segments[out_frame_idx] = {
+                            out_obj_id: out_mask_logits[i]
+                            for i, out_obj_id in enumerate(out_obj_ids)
+                        }
+                else:
+                    for out_frame_idx, out_obj_ids, out_mask_logits in net.train_propagate_in_video(train_state, start_frame_idx=0):
+                        video_segments[out_frame_idx] = {
+                            out_obj_id: out_mask_logits[i]
+                            for i, out_obj_id in enumerate(out_obj_ids)
+                        }
 
                 loss = 0
                 non_prompt_loss = 0
@@ -192,7 +226,10 @@ def train_sam(args, net: nn.Module, optimizer1, optimizer2, train_loader,
                     optimizer1.zero_grad()
                 if optimizer2 is not None:
                     optimizer2.zero_grad()
-                net.reset_state(train_state)
+                if args.distributed != 'none':
+                    net.module.reset_state(train_state)
+                else:
+                    net.reset_state(train_state)
 
             pbar.update()
 
